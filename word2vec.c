@@ -29,8 +29,8 @@ const int vocab_hash_size = 30000000;  // Maximum 30 * 0.7 = 21M words in the vo
 typedef float real;                    // Precision of float numbers
 
 struct vocab_word {
-  long long cn;
-  int *point;
+  long long cn; //词频
+  int *point;  //huffman编码对应内节点的路径
   char *word, *code, codelen;
 };
 
