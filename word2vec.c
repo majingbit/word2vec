@@ -398,7 +398,7 @@ void *TrainModelThread(void *id) {
   while (1) {
     // 这里是debug模式下显示训练进度，并且自动适应学习率
     if (word_count - last_word_count > 10000) {
-      word_count_actual += word_count - last_word_count;
+      word_count_actual += word_count - last_word_count; //当前已经处理过的词语数
       last_word_count = word_count;
       if ((debug_mode > 1)) {
         now=clock();
@@ -408,6 +408,7 @@ void *TrainModelThread(void *id) {
         fflush(stdout);
       }
       alpha = starting_alpha * (1 - word_count_actual / (real)(iter * train_words + 1));
+      //随着训练学习率会逐渐降低，为了防止降低到0，设置了一个下限：
       if (alpha < starting_alpha * 0.0001) alpha = starting_alpha * 0.0001;
     }
     if (sentence_length == 0) {
