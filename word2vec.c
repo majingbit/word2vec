@@ -586,7 +586,6 @@ void *TrainModelThread(void *id) {
       continue;
     }
   }
-  //lh------------------------------
   fclose(fi);
   free(neu1);
   free(neu1e);
