@@ -31,7 +31,7 @@ typedef float real;                    // Precision of float numbers
 struct vocab_word {
   long long cn; //词频
   int *point;  //huffman编码对应内节点的路径
-  char *word, *code, codelen;
+  char *word, *code, codelen; //huffman编码
 };
 
 char train_file[MAX_STRING], output_file[MAX_STRING];
@@ -42,6 +42,7 @@ int *vocab_hash;
 long long vocab_max_size = 1000, vocab_size = 0, layer1_size = 100;
 long long train_words = 0, word_count_actual = 0, iter = 5, file_size = 0, classes = 0;
 real alpha = 0.025, starting_alpha, sample = 1e-3;
+//syn0对应词向量，syn1对应哈夫曼树非叶子节点向量
 real *syn0, *syn1, *syn1neg, *expTable;
 clock_t start;
 
@@ -68,23 +69,28 @@ void InitUnigramTable() {
 }
 
 // Reads a single word from a file, assuming space + tab + EOL to be word boundaries
+//从文件中读取一个词
 void ReadWord(char *word, FILE *fin) {
   int a = 0, ch;
   while (!feof(fin)) {
     ch = fgetc(fin);
-    if (ch == 13) continue;
+    if (ch == 13) continue; //归为键
+    //默认空格 tab 回车键分割
     if ((ch == ' ') || (ch == '\t') || (ch == '\n')) {
       if (a > 0) {
+        //将回车键回退到输入流
         if (ch == '\n') ungetc(ch, fin);
         break;
       }
       if (ch == '\n') {
+        //回车键被当成一个特殊字符，</s>
         strcpy(word, (char *)"</s>");
         return;
       } else continue;
     }
     word[a] = ch;
     a++;
+    //最大词长60，如果大60，后面的词会被舍弃
     if (a >= MAX_STRING - 1) a--;   // Truncate too long words
   }
   word[a] = 0;
@@ -99,6 +105,7 @@ int GetWordHash(char *word) {
 }
 
 // Returns position of a word in the vocabulary; if the word is not found, returns -1
+// 返回一个词在词汇表中的位置，如果不存在则返回-1 
 int SearchVocab(char *word) {
   unsigned int hash = GetWordHash(word);
   while (1) {
@@ -122,17 +129,17 @@ int AddWordToVocab(char *word) {
   unsigned int hash, length = strlen(word) + 1;
   if (length > MAX_STRING) length = MAX_STRING;
   vocab[vocab_size].word = (char *)calloc(length, sizeof(char));
-  strcpy(vocab[vocab_size].word, word);
-  vocab[vocab_size].cn = 0;
+  strcpy(vocab[vocab_size].word, word); //对word赋值
+  vocab[vocab_size].cn = 0; //词频
   vocab_size++;
   // Reallocate memory if needed
   if (vocab_size + 2 >= vocab_max_size) {
     vocab_max_size += 1000;
     vocab = (struct vocab_word *)realloc(vocab, vocab_max_size * sizeof(struct vocab_word));
   }
-  hash = GetWordHash(word);
-  while (vocab_hash[hash] != -1) hash = (hash + 1) % vocab_hash_size;
-  vocab_hash[hash] = vocab_size - 1;
+  hash = GetWordHash(word); //获取单词的hash值
+  while (vocab_hash[hash] != -1) hash = (hash + 1) % vocab_hash_size; //开放地址法解决冲突
+  vocab_hash[hash] = vocab_size - 1; //hash表指出该词是第几个词
   return vocab_size - 1;
 }
 
@@ -158,11 +165,13 @@ void SortVocab() {
     } else {
       // Hash will be re-computed, as after the sorting it is not actual
       hash=GetWordHash(vocab[a].word);
+      //重新计算hash值，并且hash表的value是词在词数组中的下标
       while (vocab_hash[hash] != -1) hash = (hash + 1) % vocab_hash_size;
-      vocab_hash[hash] = a;
+      vocab_hash[hash] = a; 
       train_words += vocab[a].cn;
     }
   }
+  //因为词频按从大到小进行排序，所以可以直接将低频词干掉
   vocab = (struct vocab_word *)realloc(vocab, (vocab_size + 1) * sizeof(struct vocab_word));
   // Allocate memory for the binary tree construction
   for (a = 0; a < vocab_size; a++) {
@@ -189,6 +198,7 @@ void ReduceVocab() {
     vocab_hash[hash] = a;
   }
   fflush(stdout);
+  //记录词表被缩减的次数
   min_reduce++;
 }
 
@@ -197,9 +207,10 @@ void ReduceVocab() {
 void CreateBinaryTree() {
   long long a, b, i, min1i, min2i, pos1, pos2, point[MAX_CODE_LENGTH];
   char code[MAX_CODE_LENGTH];
-  long long *count = (long long *)calloc(vocab_size * 2 + 1, sizeof(long long));
-  long long *binary = (long long *)calloc(vocab_size * 2 + 1, sizeof(long long));
-  long long *parent_node = (long long *)calloc(vocab_size * 2 + 1, sizeof(long long));
+  // 哈夫曼树的节点个数为2*n-1
+  long long *count = (long long *)calloc(vocab_size * 2 + 1, sizeof(long long)); //词频数组
+  long long *binary = (long long *)calloc(vocab_size * 2 + 1, sizeof(long long)); //哈夫曼树数组
+  long long *parent_node = (long long *)calloc(vocab_size * 2 + 1, sizeof(long long)); //记录节点的父节点
   for (a = 0; a < vocab_size; a++) count[a] = vocab[a].cn;
   for (a = vocab_size; a < vocab_size * 2; a++) count[a] = 1e15;
   pos1 = vocab_size - 1;
@@ -276,6 +287,7 @@ void LearnVocabFromTrainFile() {
     if (feof(fin)) break;
     train_words++;
     if ((debug_mode > 1) && (train_words % 100000 == 0)) {
+      //显示目前已经加载了多少k的词语
       printf("%lldK%c", train_words / 1000, 13);
       fflush(stdout);
     }
@@ -284,7 +296,9 @@ void LearnVocabFromTrainFile() {
       a = AddWordToVocab(word);
       vocab[a].cn = 1;
     } else vocab[i].cn++;
-    if (vocab_size > vocab_hash_size * 0.7) ReduceVocab();
+    //如果词汇表太庞大，就缩减
+    if (vocab_size > vocab_hash_size * 0.7) 
+      ReduceVocab();
   }
   SortVocab();
   if (debug_mode > 0) {
@@ -311,13 +325,16 @@ void ReadVocab() {
     printf("Vocabulary file not found\n");
     exit(1);
   }
-  for (a = 0; a < vocab_hash_size; a++) vocab_hash[a] = -1;
+  //初始hash值都为-1
+  for (a = 0; a < vocab_hash_size; a++) 
+    vocab_hash[a] = -1;
   vocab_size = 0;
+  //这里没有对hash表大小进行判断，万一词太多，可能会导致死循环
   while (1) {
-    ReadWord(word, fin);
+    ReadWord(word, fin); //从文件中读取一个单词
     if (feof(fin)) break;
-    a = AddWordToVocab(word);
-    fscanf(fin, "%lld%c", &vocab[a].cn, &c);
+    a = AddWordToVocab(word);  //将单词添加到词典中
+    fscanf(fin, "%lld%c", &vocab[a].cn, &c); //读取词频
     i++;
   }
   SortVocab();
@@ -338,6 +355,7 @@ void ReadVocab() {
 void InitNet() {
   long long a, b;
   unsigned long long next_random = 1;
+  //也是申请动态数组，对齐，layer1_size表示词向量的维度
   a = posix_memalign((void **)&syn0, 128, (long long)vocab_size * layer1_size * sizeof(real));
   if (syn0 == NULL) {printf("Memory allocation failed\n"); exit(1);}
   if (hs) {
@@ -354,6 +372,7 @@ void InitNet() {
   }
   for (a = 0; a < vocab_size; a++) for (b = 0; b < layer1_size; b++) {
     next_random = next_random * (unsigned long long)25214903917 + 11;
+    //random
     syn0[a * layer1_size + b] = (((next_random & 0xFFFF) / (real)65536) - 0.5) / layer1_size;
   }
   CreateBinaryTree();
@@ -544,10 +563,14 @@ void *TrainModelThread(void *id) {
 void TrainModel() {
   long a, b, c, d;
   FILE *fo;
+  // 创建线程
   pthread_t *pt = (pthread_t *)malloc(num_threads * sizeof(pthread_t));
   printf("Starting training using file %s\n", train_file);
-  starting_alpha = alpha;
-  if (read_vocab_file[0] != 0) ReadVocab(); else LearnVocabFromTrainFile();
+  starting_alpha = alpha; //初始学习率
+  if (read_vocab_file[0] != 0)  //从文件读取词典
+    ReadVocab(); 
+  else 
+    LearnVocabFromTrainFile(); //从训练语料构建词典
   if (save_vocab_file[0] != 0) SaveVocab();
   if (output_file[0] == 0) return;
   InitNet();
@@ -672,6 +695,29 @@ int main(int argc, char **argv) {
   output_file[0] = 0;
   save_vocab_file[0] = 0;
   read_vocab_file[0] = 0;
+
+  /**
+    -size 词向量的长度
+    -train 训练数据 
+    -output 结果输入文件，即每个词的向量 
+    -cbow 是否使用cbow模型，0表示使用skip-gram模型，1表示使用cbow模型，默认情况下是skip-gram模型，cbow模型快一些，skip-gram模型效果好一些 
+    -size 表示输出的词向量维数 
+    -window 为训练的窗口大小，8表示每个词考虑前8个词与后8个词（实际代码中还有一个随机选窗口的过程，窗口大小<=5) 
+    -negative 表示是否使用NEG方，0表示不使用，其它的值目前还不是很清楚 
+    -hs 是否使用HS方法，0表示不使用，1表示使用 
+    -sample 表示 采样的阈值，如果一个词在训练样本中出现的频率越大，那么就越会被采样 
+    -binary 表示输出的结果文件是否采用二进制存储，0表示不使用（即普通的文本存储，可以打开查看），1表示使用，即vectors.bin的存储类型
+    -alpha 表示 学习速率 
+    -min-count 表示设置最低频率，默认为5，如果一个词语在文档中出现的次数小于该阈值，那么该词就会被舍弃 
+    -classes 表示词聚类簇的个数，从相关源码中可以得出该聚类是采用k-means
+    -threads 线程数
+    -iter 迭代次数
+    -debug debug模式，默认是2，表示在训练过程中会输出更多信息  
+    -save-vocab 保存词汇到这个文件
+    -read-vocab 词汇从该文件读取，而不是由训练数据重组 
+
+  **/
+
   if ((i = ArgPos((char *)"-size", argc, argv)) > 0) layer1_size = atoi(argv[i + 1]);
   if ((i = ArgPos((char *)"-train", argc, argv)) > 0) strcpy(train_file, argv[i + 1]);
   if ((i = ArgPos((char *)"-save-vocab", argc, argv)) > 0) strcpy(save_vocab_file, argv[i + 1]);
@@ -690,11 +736,15 @@ int main(int argc, char **argv) {
   if ((i = ArgPos((char *)"-iter", argc, argv)) > 0) iter = atoi(argv[i + 1]);
   if ((i = ArgPos((char *)"-min-count", argc, argv)) > 0) min_count = atoi(argv[i + 1]);
   if ((i = ArgPos((char *)"-classes", argc, argv)) > 0) classes = atoi(argv[i + 1]);
-  vocab = (struct vocab_word *)calloc(vocab_max_size, sizeof(struct vocab_word));
-  vocab_hash = (int *)calloc(vocab_hash_size, sizeof(int));
+
+  vocab = (struct vocab_word *)calloc(vocab_max_size, sizeof(struct vocab_word)); //初始化词典大小
+  vocab_hash = (int *)calloc(vocab_hash_size, sizeof(int)); //初始化哈希表大小
   expTable = (real *)malloc((EXP_TABLE_SIZE + 1) * sizeof(real));
   for (i = 0; i < EXP_TABLE_SIZE; i++) {
+    //expTable[i] = exp((i -500)/ 500 * 6) 即 e^-6 ~ e^6 
     expTable[i] = exp((i / (real)EXP_TABLE_SIZE * 2 - 1) * MAX_EXP); // Precompute the exp() table
+    //expTable[i] = 1/(1+e^6) ~ 1/(1+e^-6)即 0.01 ~ 1 的样子
+    //从exp(-6), exp(-499/500*6), exp(-498/500*6), ... , exp(0) , ..., exp(6)，间隔1/500
     expTable[i] = expTable[i] / (expTable[i] + 1);                   // Precompute f(x) = x / (x + 1)
   }
   TrainModel();
